@@ -176,15 +176,25 @@ if [[ "$LINKDING_READY" != "1" ]]; then
 fi
 
 # -----------------------------------------------------------------
-# Defensive idempotent re-bootstrap.  Best-effort: any failure
-# here is logged but doesn't block the container.  See
-# bootstrap_admin.py for what this guarantees on top of the
-# upstream create_initial_superuser command.
+# Defensive idempotent re-bootstrap.  Strict: a failure here
+# means the password-invalidation guarantee in
+# bootstrap_admin.py's docstring is no longer true (a prior
+# deploy may have left a usable password the auth-proxy doesn't
+# know about), so we abort and let the OpenHost runtime restart
+# the container.  linkding has already finished its own
+# bootstrap.sh's create_initial_superuser by the time we get
+# here (we waited for the port above), so transient failures
+# are unlikely.
 # -----------------------------------------------------------------
 echo "[start.sh] Running bootstrap_admin.py (defensive idempotency)"
-LINKDING_DIR=/etc/linkding \
-    LD_SUPERUSER_NAME="$LD_SUPERUSER_NAME" \
-    python3 /opt/openhost-linkding/bootstrap_admin.py || true
+if ! LINKDING_DIR=/etc/linkding \
+        LD_SUPERUSER_NAME="$LD_SUPERUSER_NAME" \
+        python3 /opt/openhost-linkding/bootstrap_admin.py; then
+    echo "[start.sh] bootstrap_admin.py failed; aborting" >&2
+    kill -TERM "$LINKDING_PID" 2>/dev/null || true
+    wait "$LINKDING_PID" 2>/dev/null || true
+    exit 1
+fi
 
 # -----------------------------------------------------------------
 # Launch auth-proxy.

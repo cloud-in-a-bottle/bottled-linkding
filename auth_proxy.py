@@ -203,6 +203,58 @@ def _strip_headers(
     ]
 
 
+def _redact_log_arg(arg: object) -> object:
+    """Strip query strings and feed tokens from a log arg.
+
+    BaseHTTPRequestHandler passes the full request line as one
+    of the ``log_message`` args (e.g. ``"GET /feeds/abc123/all
+    HTTP/1.1"``).  Tokens in URL paths (``/feeds/<token>/``) and
+    in query strings (``?api_token=...``) should never be
+    written to logs, since they're effectively passwords.
+
+    For non-string args (response status codes etc.) we pass the
+    arg through unchanged.
+    """
+    if not isinstance(arg, str):
+        return arg
+    # Drop query strings entirely.
+    redacted = arg
+    qmark = redacted.find("?")
+    while qmark >= 0:
+        # Find the end of this URL token (next whitespace or end
+        # of string).  log args are typically the full request
+        # line, so the URL is followed by " HTTP/1.1".
+        end = qmark
+        for i in range(qmark + 1, len(redacted)):
+            ch = redacted[i]
+            if ch == " " or ch == "\t":
+                end = i
+                break
+            end = i + 1
+        redacted = redacted[:qmark] + "?<redacted>" + redacted[end:]
+        qmark = redacted.find("?", qmark + len("?<redacted>"))
+    # Mask feed tokens in paths.  Pattern: /feeds/<token>/...
+    # The token is the path segment between /feeds/ and the next
+    # /.
+    feeds_idx = redacted.find("/feeds/")
+    while feeds_idx >= 0:
+        token_start = feeds_idx + len("/feeds/")
+        # End of token = next slash or whitespace.
+        token_end = token_start
+        for i in range(token_start, len(redacted)):
+            ch = redacted[i]
+            if ch == "/" or ch == " " or ch == "\t":
+                token_end = i
+                break
+            token_end = i + 1
+        if token_end > token_start:
+            redacted = (
+                redacted[:token_start] + "<redacted>" + redacted[token_end:]
+            )
+        feeds_idx = redacted.find("/feeds/", token_start + len("<redacted>"))
+    return redacted
+
+
 def _is_public_path(path: str) -> bool:
     """Return True if ``path`` matches one of the public-path prefixes.
 
@@ -230,7 +282,17 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
         # Suppress noisy local health probes.
         if path.startswith("/_healthz") or path == "/health":
             return
-        log.info("%s - " + format, self.address_string(), *args)
+        # Redact query strings and tokenised path components.
+        # The default BaseHTTPRequestHandler log format includes
+        # the full request line, which on linkding can contain:
+        #   * /feeds/<token>/all          — RSS/Atom token in path
+        #   * /feeds/<token>/shared        — same
+        #   * any URL with ?api_token=... — third-party clients
+        # Logging those leaks credentials to stdout / OpenHost
+        # logs, which is exactly the credential-leak failure
+        # mode this image is supposed to avoid.
+        sanitized_args = tuple(_redact_log_arg(a) for a in args)
+        log.info("%s - " + format, self.address_string(), *sanitized_args)
 
     def do_GET(self) -> None:  # noqa: N802
         self._dispatch()
