@@ -95,11 +95,17 @@ export LD_ENABLE_AUTH_PROXY=True
 # turns the HTTP header X-Remote-User into HTTP_X_REMOTE_USER in
 # request.META, so this is the value Django expects.
 export LD_AUTH_PROXY_USERNAME_HEADER=HTTP_X_REMOTE_USER
-# Sign-out should drop the visitor at the OpenHost root, where
-# they get a clean OpenHost login page.  Linkding's standard
-# Django logout view will redirect here after clearing the
-# session.
-export LD_AUTH_PROXY_LOGOUT_URL="${LD_AUTH_PROXY_LOGOUT_URL:-/}"
+# Sign-out should drop the visitor at the parent OpenHost zone,
+# NOT at our own root path: our root path is private, so it would
+# bounce back through the auth-proxy, get X-Remote-User stamped,
+# and re-authenticate the user immediately (effectively a no-op
+# logout).  Sending them to the parent zone means they land on
+# the OpenHost dashboard / login page where signing out from the
+# whole zone is possible.  The default is the parent zone root;
+# operators can override with their own URL if they want
+# (e.g. an upstream IdP's logout endpoint).
+ZONE_DOMAIN_FOR_LOGOUT="${OPENHOST_ZONE_DOMAIN:-localhost}"
+export LD_AUTH_PROXY_LOGOUT_URL="${LD_AUTH_PROXY_LOGOUT_URL:-https://${ZONE_DOMAIN_FOR_LOGOUT}/}"
 
 # Trust X-Forwarded-Host so Django builds absolute URLs that
 # match the public hostname.
@@ -123,13 +129,28 @@ export LD_SERVER_HOST=127.0.0.1
 export LD_SERVER_PORT=9090
 
 # -----------------------------------------------------------------
+# Launch the auth-proxy FIRST so /_healthz is available
+# immediately, even before linkding finishes its first-boot
+# work (collectstatic + migrate + create_initial_superuser).
+# The proxy 502's real requests during the cold-start window;
+# the OpenHost liveness probe hits /_healthz which is handled
+# locally and returns 200, so the container isn't killed for
+# being slow to start.
+# -----------------------------------------------------------------
+echo "[start.sh] Starting auth-proxy on 0.0.0.0:8080 -> 127.0.0.1:9090"
+export AUTH_PROXY_LISTEN_PORT="${AUTH_PROXY_LISTEN_PORT:-8080}"
+export AUTH_PROXY_UPSTREAM_HOST="127.0.0.1"
+export AUTH_PROXY_UPSTREAM_PORT="9090"
+export AUTH_PROXY_OWNER_USERNAME="$LD_SUPERUSER_NAME"
+python3 /opt/openhost-linkding/auth_proxy.py &
+PROXY_PID=$!
+
+# -----------------------------------------------------------------
 # Launch linkding via its upstream bootstrap.sh.  bootstrap.sh:
 #   * creates the data folder, runs migrations, generates the
 #     secret key, runs create_initial_superuser
 #   * starts background tasks supervisor (best-effort)
 #   * execs uwsgi as PID 1 of its process group
-#
-# We exec via bash so we keep $? for the supervision loop below.
 # -----------------------------------------------------------------
 echo "[start.sh] Starting linkding (uwsgi) on 127.0.0.1:9090"
 cd /etc/linkding
@@ -156,13 +177,20 @@ sys.exit(0 if s.connect_ex(('127.0.0.1', 9090)) == 0 else 1)
     if ! kill -0 "$LINKDING_PID" 2>/dev/null; then
         echo "[start.sh] linkding exited prematurely"
         wait "$LINKDING_PID" || true
+        kill -TERM "$PROXY_PID" 2>/dev/null || true
+        exit 1
+    fi
+    if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+        echo "[start.sh] auth-proxy exited prematurely"
+        wait "$PROXY_PID" || true
+        kill -TERM "$LINKDING_PID" 2>/dev/null || true
         exit 1
     fi
     sleep 1
 done
 
 # If linkding hasn't bound its port within the timeout, abort.
-# The alternative — silently starting the auth-proxy on top of a
+# The alternative — silently leaving the auth-proxy on top of a
 # stuck linkding — would leave /_healthz returning 200 while
 # every real request 502'd, hiding the failure from the OpenHost
 # liveness probe.  Hard-failing here causes the OpenHost runtime
@@ -170,8 +198,8 @@ done
 # /api/app_logs.
 if [[ "$LINKDING_READY" != "1" ]]; then
     echo "[start.sh] linkding did not start listening on 9090 within 120s; aborting" >&2
-    kill -TERM "$LINKDING_PID" 2>/dev/null || true
-    wait "$LINKDING_PID" 2>/dev/null || true
+    kill -TERM "$LINKDING_PID" "$PROXY_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
     exit 1
 fi
 
@@ -191,21 +219,10 @@ if ! LINKDING_DIR=/etc/linkding \
         LD_SUPERUSER_NAME="$LD_SUPERUSER_NAME" \
         python3 /opt/openhost-linkding/bootstrap_admin.py; then
     echo "[start.sh] bootstrap_admin.py failed; aborting" >&2
-    kill -TERM "$LINKDING_PID" 2>/dev/null || true
-    wait "$LINKDING_PID" 2>/dev/null || true
+    kill -TERM "$LINKDING_PID" "$PROXY_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
     exit 1
 fi
-
-# -----------------------------------------------------------------
-# Launch auth-proxy.
-# -----------------------------------------------------------------
-echo "[start.sh] Starting auth-proxy on 0.0.0.0:8080 -> 127.0.0.1:9090"
-export AUTH_PROXY_LISTEN_PORT="${AUTH_PROXY_LISTEN_PORT:-8080}"
-export AUTH_PROXY_UPSTREAM_HOST="127.0.0.1"
-export AUTH_PROXY_UPSTREAM_PORT="9090"
-export AUTH_PROXY_OWNER_USERNAME="$LD_SUPERUSER_NAME"
-python3 /opt/openhost-linkding/auth_proxy.py &
-PROXY_PID=$!
 
 # -----------------------------------------------------------------
 # Supervision: exit when either child dies.

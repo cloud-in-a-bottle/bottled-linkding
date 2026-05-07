@@ -110,7 +110,15 @@ OWNER_USERNAME = os.environ.get("AUTH_PROXY_OWNER_USERNAME", "owner")
 # we let them through without stamping owner identity).  Anything
 # matched here is treated as anonymous-friendly: the proxy will
 # forward unchanged, never inject X-Remote-User.
-PUBLIC_PATH_PREFIXES = (
+#
+# Entries ending in ``/`` are prefix matches (everything under
+# that namespace is public).  Entries NOT ending in ``/`` are
+# matched either exactly or with a ``/``-or-EOL boundary, so
+# ``/health`` matches ``/health`` and ``/health/foo`` but NOT
+# ``/healthcheck-private``.  This avoids accidentally exposing
+# unrelated paths that happen to share a string prefix with a
+# legitimate public path.
+PUBLIC_PATH_PATTERNS = (
     "/api/",
     "/static/",
     "/health",
@@ -256,14 +264,27 @@ def _redact_log_arg(arg: object) -> object:
 
 
 def _is_public_path(path: str) -> bool:
-    """Return True if ``path`` matches one of the public-path prefixes.
+    """Return True if ``path`` matches one of the public-path patterns.
+
+    Patterns ending in ``/`` are prefix matches; other patterns
+    match either exactly or up to a ``/`` boundary.  This means
+    ``/health`` will match ``/health`` and ``/health/foo`` but
+    NOT ``/healthcheck-private``.
 
     Matching is on the URL path component only — the query string
     is preserved for ``feeds/<key>?ctype=...`` style URLs but is
-    not consulted in the prefix check.
+    not consulted in the match.
     """
     path_only = path.split("?", 1)[0]
-    return any(path_only.startswith(p) for p in PUBLIC_PATH_PREFIXES)
+    for pattern in PUBLIC_PATH_PATTERNS:
+        if pattern.endswith("/"):
+            if path_only.startswith(pattern):
+                return True
+            continue
+        # Exact-or-boundary match.
+        if path_only == pattern or path_only.startswith(pattern + "/"):
+            return True
+    return False
 
 
 class AuthProxyHandler(BaseHTTPRequestHandler):
@@ -451,10 +472,21 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                 self._safe_send_error(502, "Bad Gateway")
                 return
 
-            # Forward upstream's Content-Length / Transfer-Encoding so
-            # the client knows how to frame the response (fixed-length
-            # vs. chunked).  Range responses (206 with Content-Range)
-            # work for asset downloads and image previews.
+            # Drop upstream's Content-Length and Transfer-Encoding:
+            # http.client.HTTPResponse.read() de-chunks chunked
+            # responses transparently, so passing Transfer-Encoding:
+            # chunked through to the client while writing
+            # already-de-chunked bytes would break framing.
+            # Content-Length is also dropped because we don't know
+            # the exact wire size in advance for streamed responses
+            # (the upstream may have rewritten the body during
+            # de-chunking).  Framing is unambiguous via
+            # ``Connection: close`` below — the client reads until
+            # EOF, which is the HTTP/1.1 fallback framing.
+            #
+            # Range responses (206 with Content-Range) still work:
+            # the Content-Range header passes through, and the body
+            # is read until upstream EOF.
             reason = upstream.reason or ""
             try:
                 self.send_response(upstream.status, reason)
@@ -464,8 +496,9 @@ class AuthProxyHandler(BaseHTTPRequestHandler):
                     self.send_header(key, value)
                 # Force one-and-done so we don't have to manage
                 # HTTP/1.1 keep-alive state between requests on the
-                # same TCP connection.  Browsers / OpenHost's outer
-                # router handle close-per-request fine.
+                # same TCP connection, and so the close-EOF framing
+                # described above works.  Browsers / OpenHost's
+                # outer router handle close-per-request fine.
                 self.send_header("Connection", "close")
                 self.close_connection = True
                 self.end_headers()
@@ -547,7 +580,7 @@ def main() -> int:
         upstream_host,
         upstream_port,
         OWNER_USERNAME,
-        ",".join(PUBLIC_PATH_PREFIXES),
+        ",".join(PUBLIC_PATH_PATTERNS),
     )
     try:
         server.serve_forever()
