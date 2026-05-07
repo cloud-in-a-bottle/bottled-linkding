@@ -176,11 +176,31 @@ logging.basicConfig(
 log = logging.getLogger("auth_proxy")
 
 
+def _normalize_header_name(name: str) -> str:
+    """Normalize a header name for the strip-set comparison.
+
+    HTTP per RFC 7230 names are case-insensitive and use only
+    hyphens — but some clients send the underscore form
+    (``X_Remote_User`` instead of ``X-Remote-User``).  Many
+    WSGI / FastCGI servers map both forms to the same
+    ``HTTP_X_REMOTE_USER`` meta key (the WSGI spec uppercases
+    the name and replaces hyphens with underscores), so the
+    underscore form is just as dangerous as the hyphen form
+    for trusted-header injection.
+
+    We canonicalise both into a hyphen-lowercase form for the
+    strip-set comparison, which catches both spellings.
+    """
+    return name.lower().replace("_", "-")
+
+
 def _strip_headers(
     headers: Iterable[tuple[str, str]], drop: AbstractSet[str]
 ) -> list[tuple[str, str]]:
-    drop_lower = {h.lower() for h in drop}
-    return [(k, v) for k, v in headers if k.lower() not in drop_lower]
+    drop_canonical = {_normalize_header_name(h) for h in drop}
+    return [
+        (k, v) for k, v in headers if _normalize_header_name(k) not in drop_canonical
+    ]
 
 
 def _is_public_path(path: str) -> bool:

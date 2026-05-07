@@ -43,14 +43,15 @@
 # resolve.  Pin the docker.io registry explicitly.
 FROM docker.io/sissbruecker/linkding:latest
 
-# linkding's image is python:3.13-slim-trixie based.  We need:
+# linkding's image is python:3.13.7-slim-trixie based, so the
+# system python3 binary is already present and is what
+# /opt/openhost-linkding/{auth_proxy,bootstrap_admin}.py run
+# under (no virtualenv activation needed for stdlib-only
+# scripts).  Additional packages we install:
+#
 #   * tini    — PID-1 reaping & signal forwarding
 #   * gosu    — defensive privilege drop (currently unused; kept
 #               around in case a future fix-cycle needs it)
-#   * python3 stdlib for the auth-proxy (already present via the
-#     upstream venv's interpreter, but we explicitly install
-#     python3 to get a system interpreter that's stable across
-#     image rebuilds and doesn't depend on the venv path).
 USER root
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \

@@ -161,19 +161,13 @@ sys.exit(0 if s.connect_ex(('127.0.0.1', 9090)) == 0 else 1)
     sleep 1
 done
 
-# If linkding hasn't bound its port within the timeout, we have
-# two choices: (a) skip the bootstrap and proceed with the proxy,
-# leaving the operator with a working fallback (linkding's own
-# /login form once it eventually comes up); or (b) hard-fail so
-# the OpenHost runtime restarts the container and surfaces the
-# problem.  We pick (b): silently masking a stuck linkding
-# behind a healthy auth-proxy is the failure mode the agent
-# specifically called out.  /_healthz on the auth-proxy stays
-# 200 anyway during the boot window because the OpenHost
-# liveness probe needs the container to look healthy until
-# linkding finishes its first-boot migration; but if we never
-# saw the port come up, that's a different failure class and
-# warrants a restart.
+# If linkding hasn't bound its port within the timeout, abort.
+# The alternative — silently starting the auth-proxy on top of a
+# stuck linkding — would leave /_healthz returning 200 while
+# every real request 502'd, hiding the failure from the OpenHost
+# liveness probe.  Hard-failing here causes the OpenHost runtime
+# to restart the container and surface the problem in
+# /api/app_logs.
 if [[ "$LINKDING_READY" != "1" ]]; then
     echo "[start.sh] linkding did not start listening on 9090 within 120s; aborting" >&2
     kill -TERM "$LINKDING_PID" 2>/dev/null || true
