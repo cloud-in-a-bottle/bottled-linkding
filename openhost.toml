@@ -1,0 +1,70 @@
+[app]
+name = "linkding"
+version = "0.1.0"
+description = "linkding (self-hosted bookmark manager) packaged for OpenHost with one-click trusted-header SSO. The zone owner is auto-logged-in as a passwordless superuser via the upstream LD_ENABLE_AUTH_PROXY hook; the REST API, static assets, public shared bookmarks, and feeds are exposed without zone_auth so the browser extension, bookmarklet, and public share links work for anyone."
+authors = ["Andrew Laack <andrew@laack.co>"]
+
+[runtime.container]
+image = "Dockerfile"
+# Auth-proxy port. linkding (uwsgi) runs on 127.0.0.1:9090; the
+# auth-proxy listens on 8080 and is what the OpenHost router
+# forwards to.
+port = 8080
+
+[routing]
+# auth-proxy serves a static 200 at /_healthz so the OpenHost
+# liveness probe is independent of linkding's database state.
+# linkding's own /health is also exposed (in public_paths) for
+# operators who want a deeper signal.
+health_check = "/_healthz"
+# Paths the OpenHost router lets through without zone_auth.
+# MUST match the auth-proxy's PUBLIC_PATH_PREFIXES list in
+# auth_proxy.py.
+#
+#   /api/             — REST API (browser extension, bookmarklet,
+#                        third-party integrations); auth via
+#                        Django REST framework Token header.
+#   /static/          — static assets (CSS / JS / images bundled
+#                        with linkding).
+#   /health           — linkding's unauthenticated health endpoint.
+#   /feeds/           — token-keyed RSS/Atom feeds.  The token is
+#                        embedded in the URL.
+#   /bookmarks/shared — public list of shared bookmarks (linkding's
+#                        view at this path is unauthenticated by
+#                        design — see bookmarks/views/bookmarks.py
+#                        in the upstream repo).
+#   /manifest.json    — PWA manifest, must be readable by the
+#                        browser before the user is logged in.
+#   /opensearch.xml   — OpenSearch description.
+#   /favicon.ico      — favicon, served before login.
+public_paths = [
+    "/api/",
+    "/static/",
+    "/health",
+    "/feeds/",
+    "/bookmarks/shared",
+    "/manifest.json",
+    "/opensearch.xml",
+    "/favicon.ico",
+]
+
+[resources]
+# linkding is a Django app (uwsgi + sqlite) plus our auth-proxy.
+# 768 MiB is comfortable for a personal library with thousands of
+# bookmarks; the upstream image is also fine in 256 MiB but
+# headroom for HTML preview snapshots and favicon downloads is
+# worth it.
+memory_mb = 768
+cpu_millicores = 750
+
+[data]
+# Persistent state under /data/app_data/linkding/:
+#   * data/           — symlinked to /etc/linkding/data inside the
+#                        container.  Holds the sqlite DB, secret
+#                        key, favicons, asset uploads, and HTML
+#                        preview snapshots.
+#
+# No credentials file is ever written to this dir — Pattern A
+# trusted-header SSO works without a persisted password.
+app_data = true
+app_temp_data = true
