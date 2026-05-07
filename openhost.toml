@@ -41,6 +41,7 @@ public_paths = [
     "/api/",
     "/static/",
     "/health",
+    "/_healthz",
     "/feeds/",
     "/bookmarks/shared",
     "/manifest.json",
