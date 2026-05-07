@@ -52,11 +52,15 @@ LINKDING_DIR = os.environ.get("LINKDING_DIR", "/etc/linkding")
 OWNER_USERNAME = os.environ.get("LD_SUPERUSER_NAME", "owner")
 
 
+# We invoke this via ``manage.py shell -c`` rather than a
+# bare ``python -c`` snippet so we inherit linkding's
+# DJANGO_SETTINGS_MODULE wiring (set in manage.py via
+# os.environ.setdefault).  manage.py's settings module changes
+# across upstream versions (e.g. bookmarks.settings vs
+# bookmarks.settings.prod for uwsgi); manage.py already knows
+# the right one.
 PYTHON_SNIPPET = r"""
-import os, sys
-import django
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "siteroot.settings")
-django.setup()
+import os
 from django.contrib.auth import get_user_model
 
 username = os.environ["LD_SUPERUSER_NAME"]
@@ -96,9 +100,16 @@ def main() -> int:
     env = os.environ.copy()
     env["LD_SUPERUSER_NAME"] = OWNER_USERNAME
 
+    # Use the linkding venv's python (where Django and the
+    # linkding apps are installed) and invoke via
+    # ``manage.py shell -c`` so we inherit linkding's
+    # DJANGO_SETTINGS_MODULE wiring.
+    venv_python = os.path.join(LINKDING_DIR, ".venv", "bin", "python")
+    python_bin = venv_python if os.path.exists(venv_python) else "python"
+
     try:
         result = subprocess.run(
-            ["python", "-c", PYTHON_SNIPPET],
+            [python_bin, "manage.py", "shell", "-c", PYTHON_SNIPPET],
             cwd=LINKDING_DIR,
             env=env,
             capture_output=True,
