@@ -138,9 +138,11 @@ LINKDING_PID=$!
 
 # -----------------------------------------------------------------
 # Wait for linkding's HTTP listener to come up before running
-# bootstrap_admin.py.  Up to ~60s.
+# bootstrap_admin.py.  Up to ~120s — first boot does
+# collectstatic + migrate + create-superuser before uwsgi binds.
 # -----------------------------------------------------------------
-for _ in $(seq 1 60); do
+LINKDING_READY=0
+for _ in $(seq 1 120); do
     if python3 -c "
 import socket, sys
 s = socket.socket()
@@ -148,6 +150,7 @@ s.settimeout(0.5)
 sys.exit(0 if s.connect_ex(('127.0.0.1', 9090)) == 0 else 1)
 " 2>/dev/null; then
         echo "[start.sh] linkding is listening on 9090"
+        LINKDING_READY=1
         break
     fi
     if ! kill -0 "$LINKDING_PID" 2>/dev/null; then
@@ -157,6 +160,26 @@ sys.exit(0 if s.connect_ex(('127.0.0.1', 9090)) == 0 else 1)
     fi
     sleep 1
 done
+
+# If linkding hasn't bound its port within the timeout, we have
+# two choices: (a) skip the bootstrap and proceed with the proxy,
+# leaving the operator with a working fallback (linkding's own
+# /login form once it eventually comes up); or (b) hard-fail so
+# the OpenHost runtime restarts the container and surfaces the
+# problem.  We pick (b): silently masking a stuck linkding
+# behind a healthy auth-proxy is the failure mode the agent
+# specifically called out.  /_healthz on the auth-proxy stays
+# 200 anyway during the boot window because the OpenHost
+# liveness probe needs the container to look healthy until
+# linkding finishes its first-boot migration; but if we never
+# saw the port come up, that's a different failure class and
+# warrants a restart.
+if [[ "$LINKDING_READY" != "1" ]]; then
+    echo "[start.sh] linkding did not start listening on 9090 within 120s; aborting" >&2
+    kill -TERM "$LINKDING_PID" 2>/dev/null || true
+    wait "$LINKDING_PID" 2>/dev/null || true
+    exit 1
+fi
 
 # -----------------------------------------------------------------
 # Defensive idempotent re-bootstrap.  Best-effort: any failure

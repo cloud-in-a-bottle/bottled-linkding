@@ -63,9 +63,22 @@ Auth model summary:
                                         (ahead of upstream; no
                                         dependency on linkding).
 
+Trust boundary: this proxy treats inbound
+``X-OpenHost-Is-Owner: true`` as authoritative for owner identity.
+That trust is only safe because the OpenHost router (the only
+network-reachable entry point to this container's port 8080) is
+the entity that stamps that header AND strips any client-supplied
+copy on inbound requests.  If the OpenHost runtime ever changed
+to expose 8080 directly to the public internet, an attacker could
+forge ``X-OpenHost-Is-Owner: true`` and get owner-level access to
+linkding.  Don't ship a deploy that bypasses the OpenHost router
+in front of this listener.
+
 Defense in depth: ALWAYS strip client-supplied
 ``X-OpenHost-Is-Owner`` / ``X-OpenHost-User`` / ``X-Remote-User``
-headers before forwarding upstream.
+headers before forwarding upstream.  This protects against a
+hostile-but-confused intermediary that forwards a body verbatim
+without scrubbing the trusted-header set we control.
 
 Implementation is adapted from openhost-mediawiki/auth_proxy.py
 (Pattern A) with HTTP/1.1 streaming patterns from
