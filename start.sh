@@ -38,7 +38,7 @@
 #
 #   * openhost.toml's routing.public_paths (the OpenHost router
 #     lets these through without zone_auth).
-#   * auth_proxy.py's PUBLIC_PATH_PREFIXES (we don't stamp owner
+#   * auth_proxy.py's PUBLIC_PATH_PATTERNS (we don't stamp owner
 #     identity on these so anonymous and owner visitors see the
 #     same response).
 #
@@ -71,8 +71,13 @@ fi
 # Make sure the linkding user (www-data, uid 33) can read+write
 # the persistent state.  The bind-mount is created by the
 # OpenHost runtime as root by default, so chown defensively on
-# every boot.
-chown -R www-data:www-data "$LD_DATA_DIR" 2>/dev/null || true
+# every boot.  We don't fatally exit on chown failure (the only
+# expected failure mode is "we're not root", which is fine if
+# the dir is already correctly owned), but we do log so the
+# operator can see it in oh logs.
+if ! chown -R www-data:www-data "$LD_DATA_DIR" 2>/dev/null; then
+    echo "[start.sh] chown $LD_DATA_DIR -> www-data failed; assuming dir is already correctly owned" >&2
+fi
 
 # -----------------------------------------------------------------
 # Defense in depth: remove any legacy admin-credentials.txt that

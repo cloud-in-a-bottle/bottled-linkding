@@ -18,7 +18,7 @@ port = 8080
 # operators who want a deeper signal.
 health_check = "/_healthz"
 # Paths the OpenHost router lets through without zone_auth.
-# MUST match the auth-proxy's PUBLIC_PATH_PREFIXES list in
+# MUST match the auth-proxy's PUBLIC_PATH_PATTERNS list in
 # auth_proxy.py.
 #
 #   /api/             — REST API (browser extension, bookmarklet,
