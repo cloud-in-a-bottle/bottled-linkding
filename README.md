@@ -1,7 +1,7 @@
-# openhost-linkding
+# bottled-linkding
 
 [linkding](https://github.com/sissbruecker/linkding) (self-hosted
-bookmark manager) packaged for [OpenHost](https://openhost.ai)
+bookmark manager) packaged for [Cloud in a Bottle](https://openhost.ai)
 with one-click SSO.
 
 ## What this is
@@ -27,8 +27,8 @@ image that:
 - `Dockerfile` — extends `docker.io/sissbruecker/linkding:latest`
   with `tini`, `gosu`, and our supervisor / auth-proxy /
   bootstrap scripts.
-- `openhost.toml` — the OpenHost manifest. Lists `public_paths`
-  the OpenHost router lets through without `zone_auth`.
+- `openhost.toml` — the Cloud in a Bottle manifest. Lists `public_paths`
+  the Cloud in a Bottle router lets through without `zone_auth`.
 - `start.sh` — supervises linkding (uwsgi) + the auth-proxy.
 - `auth_proxy.py` — the SSO sidecar. Strips client-supplied
   trusted headers, stamps `X-Remote-User: <owner>` on owner
@@ -73,13 +73,13 @@ image that:
 ```
 
 Anonymous visitors hitting a non-public path are redirected to
-the OpenHost `/login` page by the router before reaching us.
+the Cloud in a Bottle `/login` page by the router before reaching us.
 
 Anonymous visitors hitting a public path (e.g. a
 `/bookmarks/shared` page, or `/api/bookmarks/?...&Token=...`) are
 forwarded to linkding unchanged — so the browser extension,
 bookmarklet, and shared-link recipients all work without an
-OpenHost account.
+Cloud in a Bottle account.
 
 The owner sees the linkding UI directly with no manual login
 step.
@@ -111,7 +111,7 @@ Set up the official linkding browser extension by:
 3. Configure the extension with the URL
    `https://linkding.<your-zone>` and the token.
 
-The extension hits `/api/...` paths which are in the OpenHost
+The extension hits `/api/...` paths which are in the Cloud in a Bottle
 router's `public_paths` list, so the request reaches linkding
 without a 302 to `/login`. linkding authenticates the request
 via the `Authorization: Token ...` header.
@@ -122,25 +122,25 @@ The bookmarklet works the same way.
 
 Mark a bookmark as "shared" in the linkding UI. The
 `/bookmarks/shared` page is in `public_paths`, so the resulting
-URL is reachable by anyone — no OpenHost account required.
+URL is reachable by anyone — no Cloud in a Bottle account required.
 
 ## Caveats / what's still rough
 
 - **No OIDC.** linkding has built-in OIDC support, but for
-  OpenHost we've gone with trusted-header SSO because it
-  requires no shared secret between the OpenHost router and
+  Cloud in a Bottle we've gone with trusted-header SSO because it
+  requires no shared secret between the Cloud in a Bottle router and
   linkding. If you want to point linkding at an external
   OIDC provider, you'll need to fork this and add the OIDC env
   vars (`OIDC_OP_*` etc.) — it'll layer cleanly with the
   trusted-header path.
-- **One owner only.** Multiple OpenHost zone members all map to
+- **One owner only.** Multiple Cloud in a Bottle zone members all map to
   the single `owner` superuser. linkding's own multi-user
   support is unused. If you want per-user bookmarks, use the
-  OpenHost router's per-user header convention and configure
+  Cloud in a Bottle router's per-user header convention and configure
   `LD_AUTH_PROXY_USERNAME_HEADER` accordingly.
 - **First boot is slow.** The upstream `bootstrap.sh` runs
   migrations + collects static + creates the secret key on
-  first boot, which can take ~30s. The OpenHost healthcheck
+  first boot, which can take ~30s. The Cloud in a Bottle healthcheck
   hits `/_healthz` (served by the auth-proxy independently) so
   the cold-start window doesn't trip the "App started but not
   responding" detector.
