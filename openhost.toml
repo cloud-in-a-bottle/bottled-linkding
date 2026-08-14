@@ -1,7 +1,7 @@
 [app]
 name = "linkding"
 version = "0.1.0"
-description = "linkding (self-hosted bookmark manager) packaged for OpenHost with one-click trusted-header SSO. The zone owner is auto-logged-in as a passwordless superuser via the upstream LD_ENABLE_AUTH_PROXY hook; the REST API, static assets, public shared bookmarks, and feeds are exposed without zone_auth so the browser extension, bookmarklet, and public share links work for anyone."
+description = "linkding (self-hosted bookmark manager) packaged for Cloud in a Bottle with one-click trusted-header SSO. The zone owner is auto-logged-in as a passwordless superuser via the upstream LD_ENABLE_AUTH_PROXY hook; the REST API, static assets, public shared bookmarks, and feeds are exposed without zone_auth so the browser extension, bookmarklet, and public share links work for anyone."
 authors = ["Andrew Laack <andrew@laack.co>"]
 
 [runtime.container]
